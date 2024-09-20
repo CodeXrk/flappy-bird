@@ -1,11 +1,16 @@
 import pygame
 import random
 import os
+#import speech_recognition as sr
 from enum import Enum
+from datetime import datetime
+
 
 # Initialize Pygame
 pygame.init()
 pygame.mixer.init()
+
+#recognizer = sr.Recognizer()
 
 # Set up the game window
 WIDTH = 400
@@ -28,7 +33,7 @@ class GameState(Enum):
     GAME_OVER = 2
     SHOP = 3
 
-# Power-up types
+# Power-up types 
 class PowerUp(Enum):
     NONE = 0
     IMMUNITY = 1
@@ -37,6 +42,8 @@ class PowerUp(Enum):
 # Game variables
 high_score = 0
 coins = 0
+power_up_spawn_chance = 0.005  # 0.5% chance per frame
+active_power_ups = []
 
 # Bird properties
 bird_x = 50
@@ -63,6 +70,15 @@ high_score = 0
 coins = 0
 difficulty = 1
 pipe_speed = 3
+
+# Achievements
+achievements = {
+    "First Flight": {"description": "Score your first point", "achieved": False},
+    "High Flyer": {"description": "Reach a score of 50", "achieved": False},
+    "Night Owl": {"description": "Play during night time", "achieved": False},
+    "Shopaholic": {"description": "Make a purchase from the shop", "achieved": False},
+    "Power Player": {"description": "Use a power-up", "achieved": False}
+}
 
 # Fonts
 font = pygame.font.Font(None, 36)
@@ -144,17 +160,21 @@ def update_high_score():
 
 
 def save_game_data():
-    global high_score, coins
+    global high_score, coins, achievements
     with open("game_data.txt", "w") as f:
-        f.write(f"{high_score},{coins}")
+        f.write(f"{high_score},{coins}\n")
+        for achievement, data in achievements.items():
+            f.write(f"{achievement},{data['achieved']}\n")
 
 def load_game_data():
-    global high_score, coins
+    global high_score, coins, achievements
     if os.path.exists("game_data.txt"):
         with open("game_data.txt", "r") as f:
-            data = f.read().split(',')
-            high_score = int(data[0])
-            coins = int(data[1])
+            data = f.readlines()
+            high_score, coins = map(int, data[0].strip().split(','))
+            for i, (achievement, _) in enumerate(achievements.items()):
+                if i + 1 < len(data):
+                    achievements[achievement]['achieved'] = data[i+1].strip().split(',')[1] == 'True'
 
 load_game_data()
 
@@ -166,6 +186,15 @@ def draw_menu():
     screen.blit(title, (WIDTH // 2 - title.get_width() // 2, HEIGHT // 4))
     screen.blit(start, (WIDTH // 2 - start.get_width() // 2, HEIGHT // 2))
     screen.blit(shop, (WIDTH // 2 - shop.get_width() // 2, HEIGHT * 3 // 4))
+    voice_control = font.render("Say 'Jump' or 'Up' to control", True, WHITE)
+    screen.blit(voice_control, (WIDTH // 2 - voice_control.get_width() // 2, HEIGHT * 3 // 4 + 30))
+
+def spawn_power_up():
+    global active_power_ups
+    power_up_type = random.choice([PowerUp.IMMUNITY, PowerUp.SLOW_MOTION])
+    power_up_x = WIDTH
+    power_up_y = random.randint(50, HEIGHT - 50)
+    active_power_ups.append({"type": power_up_type, "x": power_up_x, "y": power_up_y})
 
 def draw_game():
     screen.blit(bg_day if is_day else bg_night, (0, 0))
@@ -206,6 +235,12 @@ def draw_game():
     bird_rect = rotated_bird.get_rect(center=(int(bird_x), int(bird_y)))
     screen.blit(rotated_bird, bird_rect)
 
+    # Draw power-ups
+    for power_up in active_power_ups:
+        pygame.draw.circle(screen, YELLOW, (int(power_up["x"]), int(power_up["y"])), 15)
+        power_up_text = font.render(power_up["type"].name[0], True, BLACK)
+        screen.blit(power_up_text, (power_up["x"] - 5, power_up["y"] - 10))
+
 def draw_game_over():
     screen.blit(bg_day if is_day else bg_night, (0, 0))
     game_over_text = big_font.render("Game Over", True, WHITE)
@@ -237,6 +272,8 @@ def draw_shop():
     back_text = font.render("Press B to go back", True, WHITE)
     screen.blit(back_text, (WIDTH // 2 - back_text.get_width() // 2, HEIGHT - 50))
 
+
+
 def handle_shop_purchase(mouse_pos):
     global coins, current_bird_color, unlocked_colors, current_power_up
     for i, item in enumerate(shop_items):
@@ -248,6 +285,17 @@ def handle_shop_purchase(mouse_pos):
                 coins -= item['cost']
                 current_power_up = item['power_up']
                 power_up_sound.play()
+
+
+def update_achievements():
+    global achievements, score, is_day
+    if score >= 1:
+        achievements["First Flight"]["achieved"] = True
+    if score >= 50:
+        achievements["High Flyer"]["achieved"] = True
+    if not is_day:
+        achievements["Night Owl"]["achieved"] = True
+    # "Shopaholic" and "Power Player" will be updated in their respective functions
 
 def spawn_cloud():
     cloud_x = WIDTH
@@ -284,6 +332,25 @@ while running:
         # Update bird position
         bird_velocity += gravity
         bird_y += bird_velocity
+
+        # Spawn power-ups
+        if random.random() < power_up_spawn_chance:
+            spawn_power_up()
+
+        # Move and collect power-ups
+        for power_up in active_power_ups[:]:
+            power_up["x"] -= pipe_speed
+            if power_up["x"] < -30:
+                active_power_ups.remove(power_up)
+            elif abs(bird_x - power_up["x"]) < 20 and abs(bird_y - power_up["y"]) < 20:
+                current_power_up = power_up["type"]
+                power_up_duration = immunity_duration if current_power_up == PowerUp.IMMUNITY else slow_motion_duration
+                active_power_ups.remove(power_up)
+                power_up_sound.play()
+                achievements["Power Player"]["achieved"] = True
+
+        # Update achievements
+        update_achievements()
 
         # Move pipe
         if current_power_up == PowerUp.SLOW_MOTION:
@@ -322,6 +389,8 @@ while running:
             game_state = GameState.GAME_OVER
             game_over_sound.play()
             update_high_score()
+        
+        
 
         # Update power-up duration
         if current_power_up != PowerUp.NONE:

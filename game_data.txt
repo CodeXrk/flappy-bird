@@ -1,1 +1,6 @@
-16,32
+16,43
+First Flight,True
+High Flyer,False
+Night Owl,True
+Shopaholic,False
+Power Player,True
